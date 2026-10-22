@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://github.com/dfinity/icp-cli/raw/refs/tags/v1.3.0/docs/schemas/icp-yaml-schema.json
+
+# PIKO Legacy -- an independent project, kept separate from piko-icp's own
+# deploy/canister lifecycle like every other Piko app. `legacy` charges its
+# fee on the real PIKO ledger on mainnet by fixed canister id, redirectable
+# to `test-ledger` for local development only (see scripts/deploy-local.sh).
+canisters:
+  - test-ledger
+  - legacy
+  - legacy-frontend
+
+# 8000-8080 are already used by other local icp-cli projects on this machine.
+networks:
+  - name: local
+    mode: managed
+    gateway:
+      port: 8090

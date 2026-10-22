@@ -1,0 +1,121 @@
+type R_4 = 
+ variant {
+   err: text;
+   ok: blob;
+ };
+type R_3 = 
+ variant {
+   err: text;
+   ok: HeirView;
+ };
+type R_2 = 
+ variant {
+   err: text;
+   ok: Opened;
+ };
+type R_1 = 
+ variant {
+   err: text;
+   ok;
+ };
+type R = 
+ variant {
+   err: text;
+   ok: nat;
+ };
+type OwnerView = 
+ record {
+   createdAt: int;
+   deadline: int;
+   heirs: vec record {
+                name: text;
+                opens: nat;
+              };
+   id: nat;
+   intervalSec: nat;
+   lastCheckIn: int;
+   released: bool;
+   secretBytes: nat;
+   title: text;
+ };
+type Opened = 
+ record {
+   ciphertext: blob;
+   encryptedVetKey: blob;
+   ibeId: blob;
+   wrappedKey: blob;
+ };
+type HeirView = 
+ record {
+   deadline: int;
+   heirName: text;
+   opensLeft: nat;
+   released: bool;
+   title: text;
+ };
+type HeirIn = 
+ record {
+   claimHash: blob;
+   name: text;
+   wrappedKey: blob;
+ };
+type CreateArgs = 
+ record {
+   ciphertext: blob;
+   heirs: vec HeirIn;
+   ibeId: blob;
+   intervalSec: nat;
+   title: text;
+ };
+type Config = 
+ record {
+   context: blob;
+   feeE8s: nat;
+   feeRecipient: principal;
+   feeShareTargets: vec principal;
+   keyName: text;
+   ledger: principal;
+   maxHeirs: nat;
+   maxIntervalSec: nat;
+   maxOpensPerHeir: nat;
+   maxSecretBytes: nat;
+   maxVaultsPerOwner: nat;
+   minIntervalSec: nat;
+   sharedE8s: nat;
+   vaultCount: nat;
+ };
+service : {
+  /// "I'm still here": restarts the countdown of every vault of the caller
+  /// that is not released yet. Returns how many were reset.
+  checkIn: () -> (nat);
+  /// Pays the fee (ICRC-2: approve fee + ledger fee for this canister first),
+  /// then stores the already-encrypted vault.
+  createVault: (a: CreateArgs) -> (R);
+  /// Erases a vault for good, released or not. Its identity is never reused.
+  deleteVault: (id: nat) -> (R_1);
+  /// Anyone may trigger it (e.g. if an automatic run failed).
+  distributeFees: () -> (R);
+  /// Fetches (once) and returns the vetKD public key browsers encrypt to.
+  fetchPublicKey: () -> (R_4);
+  getConfig: () -> (Config) query;
+  /// The vetKD public key for this canister and CONTEXT, once fetched.
+  getPublicKey: () -> (opt blob) query;
+  heirLookup: (id: nat, proof: blob) -> (R_3) query;
+  /// After release: returns the heir's encrypted material and the vault's
+  /// vetKey, encrypted to the browser's one-time transport key.
+  heirOpen: (id: nat, proof: blob, transportPublicKey: blob) -> (R_2);
+  myVaults: () -> (vec OwnerView) query;
+  setDerivationCycles: (c: nat) -> (R_1);
+  setFee: (e8s: nat) -> (R_1);
+  setFeeRecipient: (p: opt principal) -> (R_1);
+  setFeeShareTargets: (targets: vec principal) -> (R_1);
+  /// Changes the check-in interval of a vault that is not released yet.
+  /// Counts as a check-in.
+  setInterval: (id: nat, intervalSec: nat) -> (R_1);
+  /// The key every existing vault was encrypted to: frozen once a vault exists.
+  setKeyName: (name: text) -> (R_1);
+  setMinIntervalSec: (s: nat) -> (R_1);
+  setPikoLedgerId: (p: principal) -> (R_1);
+  /// Sends fees collected on this canister's own account (only useful with no share targets).
+  withdrawFees: (to: principal, amountE8s: nat) -> (R);
+}
