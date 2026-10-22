@@ -100,7 +100,7 @@ export function NewVault() {
 
       <div className="card form">
         <label>
-          Name (only you and your heirs see it)
+          Name (not encrypted: keep it vague)
           <input value={title} maxLength={80} placeholder="e.g. Crypto wallets" onChange={(e) => setTitle(e.target.value)} />
         </label>
         <label>

@@ -190,7 +190,7 @@ actor self {
   ];
   var sharedE8s : Nat = 0;
   var keyName : Text = "key_1"; // "dfx_test_key" on a local network
-  var derivationCycles : Nat = 26_153_846_153; // vetkd_derive_key on key_1 (13-node subnet price list)
+  var derivationCycles : Nat = 26_153_846_153; // vetkd_derive_key on key_1 (34-node fiduciary subnet price)
   var minIntervalSec : Nat = 7 * DAY_SEC;
 
   // ---- State ----

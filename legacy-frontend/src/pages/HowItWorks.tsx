@@ -35,6 +35,10 @@ export function HowItWorks() {
 
       <h3>Good to know</h3>
       <ul>
+        <li>
+          Only your message is encrypted. The vault's name and your recipients' first names are stored as plain text: keep
+          them vague.
+        </li>
         <li>Links are shown once, when you create the vault. If you lose one, delete the vault and make a new one.</li>
         <li>There is no reminder email: put the deadline in your calendar.</li>
         <li>You can delete a vault at any time. Once released, a vault cannot be "un-released".</li>
