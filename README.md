@@ -22,7 +22,7 @@ proof_i = SHA-256("piko-legacy-claim" || s_i)     the canister stores SHA-256(pr
 
 ## Limits
 
-5 heirs, 32 KB of ciphertext, 10 vaults per owner, 5,000 vaults in total. Each link opens 3 times, each vault 10 times (each open costs one vetKD derivation, ~26 B cycles on `key_1`). One-time fee in PIKO (ICRC-2), 1,000 PIKO on mainnet, paid to the canister and then split equally by `distributeFees` (run automatically after each new vault, callable by anyone) between `feeShareTargets`: the PikoDice (`7yyso-myaaa-aaaaj-qseia-cai`) and PikoBlackjack (`d76up-oaaaa-aaaai-ax4ia-cai`) bankrolls. Cycles for vetKey derivations are not funded by the fee: top the canister up.
+5 heirs, 32 KB of ciphertext, 10 vaults per owner, 5,000 vaults in total. Each link opens 3 times, each vault 10 times (each open costs one vetKD derivation, ~26 B cycles on `key_1`). One-time fee in PIKO (ICRC-2), 6,000 PIKO on mainnet, paid to the canister and then split equally by `distributeFees` (run automatically after each new vault, callable by anyone) between `feeShareTargets`: the PikoDice (`7yyso-myaaa-aaaaj-qseia-cai`) and PikoBlackjack (`d76up-oaaaa-aaaai-ax4ia-cai`) bankrolls. Cycles for vetKey derivations are not funded by the fee: top the canister up.
 
 ## Controllers
 
