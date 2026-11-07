@@ -175,6 +175,10 @@ actor self {
   transient let CYCLES_RESERVE : Nat = 300_000_000_000; // never let a derivation eat the freezing margin
   transient let MIN_ACTION_INTERVAL : Int = 3 * SEC;
   transient let CONTEXT : Blob = "piko-legacy-v1";
+  // A derivation attaches this many times its current price and the management
+  // canister refunds the rest. Without a margin, a price rise after blackholing
+  // (derivationCycles can then no longer be changed) would lock every heir out.
+  transient let DERIVATION_MARGIN : Nat = 4;
 
   // ---- Configuration (controllers only) ----
 
@@ -469,7 +473,8 @@ actor self {
     var vaultOpens = 0;
     for (h in v.heirs.vals()) { vaultOpens += h.opens };
     if (vaultOpens >= MAX_OPENS_PER_VAULT) { return #err "This vault has been opened too many times" };
-    if (Cycles.balance() < derivationCycles + CYCLES_RESERVE) { return #err "The vault service is low on cycles, try again later" };
+    let attachedCycles = derivationCycles * DERIVATION_MARGIN;
+    if (Cycles.balance() < attachedCycles + CYCLES_RESERVE) { return #err "The vault service is low on cycles, try again later" };
 
     // Count the open before the await so parallel calls cannot exceed the cap.
     func setOpens(delta : Int) {
@@ -486,7 +491,7 @@ actor self {
     };
     setOpens(1);
     let r = try {
-      await (with cycles = derivationCycles) ic.vetkd_derive_key({
+      await (with cycles = attachedCycles) ic.vetkd_derive_key({
         input = v.ibeId;
         context = CONTEXT;
         transport_public_key = transportPublicKey;
