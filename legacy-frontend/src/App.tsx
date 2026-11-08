@@ -9,6 +9,7 @@ import { NewVault } from "./pages/NewVault";
 import { Open } from "./pages/Open";
 import { HowItWorks } from "./pages/HowItWorks";
 import { Wallet } from "./pages/Wallet";
+import { AppNav } from "./components/AppNav";
 
 function useRoute(): string[] {
   const read = () => window.location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
@@ -81,41 +82,50 @@ export default function App() {
   return (
     <SessionContext.Provider value={session}>
       <div className="shell">
-        <header className="top">
-          <a className="brand" href="#/">
-            <img src="/piko-logo.svg" alt="" />
-            <span>
-              PIKO <b>Legacy</b>
-            </span>
-          </a>
-          <nav className="nav">
-            {principal && !isHeirPage && <a href="#/">My vaults</a>}
-            {principal && !isHeirPage && (
-              <a href="#/wallet" className={page === "wallet" ? "on" : ""}>
-                Wallet
-              </a>
-            )}
-            <a href="#/how" className={page === "how" ? "on" : ""}>
-              How it works
+        {isHeirPage ? (
+          // The page a recipient opens stays free of links to the games.
+          <header className="top">
+            <a className="brand" href="#/">
+              <img src="/piko-logo.svg" alt="" />
+              <span>
+                PIKO <b>Legacy</b>
+              </span>
             </a>
-          </nav>
-          {!isHeirPage && (
-            <div className="account">
-              {principal ? (
-                <>
-                  <a className="account-id" href="#/wallet" title={`${principal.toText()} (open wallet)`}>
-                    <code>{short(principal)}</code>
-                  </a>
-                  <button className="ghost" onClick={session.logout}>
-                    Log out
-                  </button>
-                </>
-              ) : (
-                <button onClick={session.login}>Log in</button>
+            <nav className="nav">
+              <a href="#/how">How it works</a>
+            </nav>
+          </header>
+        ) : (
+          <>
+            <AppNav current="legacy">
+              <div className="account">
+                {principal ? (
+                  <>
+                    <a className="account-id" href="#/wallet" title={`${principal.toText()} (open wallet)`}>
+                      <code>{short(principal)}</code>
+                    </a>
+                    <button className="ghost" onClick={session.logout}>
+                      Log out
+                    </button>
+                  </>
+                ) : (
+                  <button onClick={session.login}>Log in</button>
+                )}
+              </div>
+            </AppNav>
+            <nav className="nav subnav">
+              {principal && <a href="#/">My vaults</a>}
+              {principal && (
+                <a href="#/wallet" className={page === "wallet" ? "on" : ""}>
+                  Wallet
+                </a>
               )}
-            </div>
-          )}
-        </header>
+              <a href="#/how" className={page === "how" ? "on" : ""}>
+                How it works
+              </a>
+            </nav>
+          </>
+        )}
 
         <main>{body}</main>
 
