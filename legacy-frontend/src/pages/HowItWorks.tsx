@@ -41,6 +41,7 @@ export function HowItWorks() {
         </li>
         <li>Links are shown once, when you create the vault. If you lose one, delete the vault and make a new one.</li>
         <li>There is no reminder email: put the deadline in your calendar.</li>
+        <li>If the service is ever frozen for lack of cycles, the time it was down is added to your deadline, up to 90 days, since you could not check in meanwhile.</li>
         <li>You can delete a vault at any time. Once released, a vault cannot be "un-released".</li>
         <li>Anyone holding a link can open it after release. Keep the links as safe as the secret itself.</li>
         <li>Each link can be opened 3 times. Copy the secret somewhere safe the first time.</li>

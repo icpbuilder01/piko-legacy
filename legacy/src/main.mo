@@ -204,6 +204,24 @@ actor self {
   var nextVaultId : Nat = 1;
   var cachedPublicKey : ?Blob = null;
 
+  // ---- Time the canister could not run ----
+  // While this canister is frozen (out of cycles) an owner cannot check in, but
+  // the clock keeps going. Anyone could otherwise spam it dry, for free, and
+  // keep it frozen until a vault's deadline had passed, opening it against the
+  // owner's will. So time the canister demonstrably did not run is added to the
+  // deadline: a tick records that it is alive, and a gap between ticks is
+  // downtime. Capped, so that a tick that somehow stopped for good could only
+  // delay a release, never block it.
+  transient let LIVENESS_TICK_SEC : Nat = 3_600;
+  transient let DOWNTIME_GAP_NS : Int = 3 * 3_600 * SEC;
+  transient let MAX_DOWNTIME_EXTENSION_NS : Int = 90 * 86_400 * SEC;
+  var lastAliveAt : Int = Time.now();
+  var downtimeTotalNs : Int = 0;
+  // Total downtime at each vault's last check-in. No entry means 0, which is
+  // right for vaults older than this code: downtimeTotalNs started at 0 too.
+  let downtimeAtCheckIn = Map.empty<Nat, Int>();
+  transient var livenessTimer : ?Timer.TimerId = null;
+
   transient let lastAction = Map.empty<Principal, Int>();
   transient var distributing : Bool = false;
   transient let creating = Map.empty<Principal, Bool>();
@@ -230,8 +248,34 @@ actor self {
     null;
   };
 
-  func deadline(v : Vault) : Int { v.lastCheckIn + v.intervalNs };
-  func released(v : Vault, now : Int) : Bool { now >= deadline(v) };
+  // Includes a gap still in progress: the first call after a thaw can run
+  // before the next tick has recorded it.
+  func downtimeUpTo(now : Int) : Int {
+    let gap = now - lastAliveAt;
+    downtimeTotalNs + (if (gap > DOWNTIME_GAP_NS) gap else 0);
+  };
+
+  func recordCheckIn(id : Nat, now : Int) {
+    Map.add(downtimeAtCheckIn, Nat.compare, id, downtimeUpTo(now));
+  };
+
+  func deadline(v : Vault, now : Int) : Int {
+    let anchor = switch (Map.get(downtimeAtCheckIn, Nat.compare, v.id)) { case (?d) d; case null 0 };
+    v.lastCheckIn + v.intervalNs + Int.min(downtimeUpTo(now) - anchor, MAX_DOWNTIME_EXTENSION_NS);
+  };
+  func released(v : Vault, now : Int) : Bool { now >= deadline(v, now) };
+
+  func onLivenessTick() : async () {
+    let now = Time.now();
+    let gap = now - lastAliveAt;
+    if (gap > DOWNTIME_GAP_NS) { downtimeTotalNs += gap };
+    lastAliveAt := now;
+  };
+
+  func armLivenessTimer<system>() {
+    switch livenessTimer { case (?id) { Timer.cancelTimer(id) }; case null {} };
+    livenessTimer := ?Timer.recurringTimer<system>(#seconds LIVENESS_TICK_SEC, onLivenessTick);
+  };
 
   func ownerView(v : Vault, now : Int) : OwnerView {
     {
@@ -240,7 +284,7 @@ actor self {
       createdAt = v.createdAt;
       lastCheckIn = v.lastCheckIn;
       intervalSec = Int.abs(v.intervalNs / SEC);
-      deadline = deadline(v);
+      deadline = deadline(v, now);
       released = released(v, now);
       heirs = Array.map<Heir, { name : Text; opens : Nat }>(v.heirs, func h = { name = h.name; opens = h.opens });
       secretBytes = v.ciphertext.size();
@@ -392,6 +436,7 @@ actor self {
     };
     Map.remove(creating, Principal.compare, caller);
     let now = Time.now();
+    recordCheckIn(id, now);
     Map.add(
       vaults,
       Nat.compare,
@@ -422,6 +467,7 @@ actor self {
     var n = 0;
     for (v in Map.values(vaults)) {
       if (v.owner == caller and not released(v, now)) {
+        recordCheckIn(v.id, now);
         Map.add(vaults, Nat.compare, v.id, { v with lastCheckIn = now });
         n += 1;
       };
@@ -436,6 +482,7 @@ actor self {
     let now = Time.now();
     if (released(v, now)) { return #err "This vault is already released" };
     if (intervalSec < minIntervalSec or intervalSec > MAX_INTERVAL_SEC) { return #err "Interval out of range" };
+    recordCheckIn(id, now);
     Map.add(vaults, Nat.compare, id, { v with lastCheckIn = now; intervalNs = intervalSec * SEC });
     #ok;
   };
@@ -444,6 +491,7 @@ actor self {
   public shared ({ caller }) func deleteVault(id : Nat) : async R<()> {
     switch (ownedVault(caller, id)) { case (#err e) { return #err e }; case (#ok _) {} };
     Map.remove(vaults, Nat.compare, id);
+    Map.remove(downtimeAtCheckIn, Nat.compare, id);
     #ok;
   };
 
@@ -453,11 +501,12 @@ actor self {
     let v = switch (Map.get(vaults, Nat.compare, id)) { case (?v) v; case null { return #err "This vault does not exist (or was deleted)" } };
     let i = switch (heirIndex(v, proof)) { case (?i) i; case null { return #err "This link does not match the vault" } };
     let h = v.heirs[i];
+    let now = Time.now();
     #ok {
       title = v.title;
       heirName = h.name;
-      deadline = deadline(v);
-      released = released(v, Time.now());
+      deadline = deadline(v, now);
+      released = released(v, now);
       opensLeft = if (h.opens >= MAX_OPENS_PER_HEIR) 0 else MAX_OPENS_PER_HEIR - h.opens;
     };
   };
@@ -611,4 +660,9 @@ actor self {
     } catch (e) { return #err("Ledger call failed: " # Error.message(e)) };
     switch res { case (#Ok b) #ok b; case (#Err e) #err(debug_show e) };
   };
+
+  // Timers do not survive upgrades, and the call below only runs on first install.
+  system func postupgrade() { armLivenessTimer<system>() };
+
+  armLivenessTimer<system>();
 };
