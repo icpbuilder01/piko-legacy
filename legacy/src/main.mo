@@ -389,6 +389,14 @@ actor self {
   /// Pays the fee (ICRC-2: approve fee + ledger fee for this canister first),
   /// then stores the already-encrypted vault.
   public shared ({ caller }) func createVault(a : CreateArgs) : async R<Nat> {
+    let now = Time.now();
+    switch (enterPaid(caller, now)) { case (?wait) { return #err("Too many attempts right now, try again in " # Nat.toText(wait / 1_000_000_000 + 1) # " s") }; case null {} };
+    let result = await* createVaultBody(caller, a);
+    noteOutcome(caller, switch (result) { case (#ok(_)) { ?true };  case _ { ?false } }, Time.now());
+    result;
+  };
+
+  func createVaultBody(caller : Principal, a : CreateArgs) : async* R<Nat> {
     if (Principal.isAnonymous(caller)) { return #err "Log in first" };
     switch (throttle(caller)) { case (?e) { return #err e }; case null {} };
     if (Map.containsKey(creating, Principal.compare, caller)) { return #err "Another vault is being created" };
@@ -593,7 +601,10 @@ actor self {
   };
 
   /// Anyone may trigger it (e.g. if an automatic run failed).
-  public func distributeFees() : async R<Nat> { await distribute() };
+  public func distributeFees() : async R<Nat> {
+    lastManualDistributeAt := Time.now();
+    await distribute();
+  };
 
   // ---- Controllers ----
 
@@ -665,4 +676,159 @@ actor self {
   system func postupgrade() { armLivenessTimer<system>() };
 
   armLivenessTimer<system>();
+
+  // ---- Paid entry points: who gets in ----
+  //
+  // A paid call (bet, deal, pixel, ad, vault) costs this canister cycles even
+  // when the payment fails, and a new identity costs nothing to make. Known
+  // players (anyone who has already paid here) always get in, but after a few
+  // failures in a row each further failure makes them wait longer, up to an
+  // hour; one success clears it. Everyone else shares a small newcomer
+  // allowance that refills over time, so a flood of throwaway identities can
+  // only burn a bounded amount of cycles. All transient: an upgrade starts
+  // again from a full allowance and clean slates.
+  transient let NEWCOMER_BURST : Int = 30;
+  transient let NEWCOMER_REFILL_NANOS : Int = 120_000_000_000; // one more newcomer every 2 min
+  transient var newcomerCredit : Int = NEWCOMER_BURST * NEWCOMER_REFILL_NANOS;
+  transient var newcomerCreditAt : Int = 0;
+  transient let FREE_FAILURES : Nat = 3;
+  transient let FAILURE_BACKOFF_BASE_NANOS : Int = 10_000_000_000;
+  transient let FAILURE_BACKOFF_MAX_NANOS : Int = 3_600_000_000_000;
+  // Only known players get an entry here, so it stays as small as the player list.
+  transient let failureStreaks : Map.Map<Principal, (Nat, Int)> = Map.empty<Principal, (Nat, Int)>();
+
+  func isKnownPlayer(p : Principal) : Bool { countOwned(p) > 0 };
+
+  func newcomerCreditNow(now : Int) : Int {
+    Int.min(NEWCOMER_BURST * NEWCOMER_REFILL_NANOS, newcomerCredit + (now - newcomerCreditAt));
+  };
+
+  func takeNewcomerSlot(now : Int) : Bool {
+    let credit = newcomerCreditNow(now);
+    if (credit < NEWCOMER_REFILL_NANOS) { return false };
+    newcomerCredit := credit - NEWCOMER_REFILL_NANOS;
+    newcomerCreditAt := now;
+    true;
+  };
+
+  func blockedUntil(p : Principal) : Int {
+    switch (Map.get(failureStreaks, Principal.compare, p)) { case (?(_, until)) { until }; case null { 0 } };
+  };
+
+  // Ok resets the streak; a failure by a known player lengthens it; neutral
+  // outcomes (TooSoon) change nothing.
+  func noteOutcome(p : Principal, succeeded : ?Bool, now : Int) {
+    switch (succeeded) {
+      case (?true) { Map.remove(failureStreaks, Principal.compare, p) };
+      case (?false) {
+        if (isKnownPlayer(p)) {
+          let streak = switch (Map.get(failureStreaks, Principal.compare, p)) { case (?(k, _)) { k + 1 }; case null { 1 } };
+          let wait = if (streak <= FREE_FAILURES) { 0 } else {
+            Int.min(FAILURE_BACKOFF_MAX_NANOS, FAILURE_BACKOFF_BASE_NANOS * (2 ** Nat.min(20, streak - FREE_FAILURES - 1 : Nat)));
+          };
+          Map.add(failureStreaks, Principal.compare, p, (streak, now + wait));
+        };
+      };
+      case null {};
+    };
+  };
+
+  // Admission check shared by inspect (free refusal) and the method itself
+  // (for canister callers, which skip inspect). Returns the wait in
+  // nanoseconds when refused.
+  func paidRefusal(caller : Principal, now : Int) : ?Nat {
+    if (isKnownPlayer(caller)) {
+      let until = blockedUntil(caller);
+      if (until > now) { ?Int.abs(until - now) } else { null };
+    } else if (newcomerCreditNow(now) < NEWCOMER_REFILL_NANOS) {
+      ?Int.abs(NEWCOMER_REFILL_NANOS - newcomerCreditNow(now));
+    } else { null };
+  };
+
+  func admitPaid(caller : Principal, now : Int, lastAttempt : ?Int, interval : Int) : Bool {
+    if (Principal.isAnonymous(caller)) { return false };
+    if (isKnownPlayer(caller)) {
+      switch (lastAttempt) { case (?t) { if (now - t < interval) { return false } }; case null {} };
+    };
+    paidRefusal(caller, now) == null;
+  };
+
+  // In the method: refuse, or take a newcomer slot.
+  func enterPaid(caller : Principal, now : Int) : ?Nat {
+    if (Principal.isAnonymous(caller)) { return null }; // the method answers Anonymous itself
+    switch (paidRefusal(caller, now)) {
+      case (?wait) { ?wait };
+      case null {
+        if (not isKnownPlayer(caller)) { ignore takeNewcomerSlot(now) };
+        null;
+      };
+    };
+  };
+
+  // ---- Ingress filter (anti-spam) ----
+  //
+  // Runs before a user's call is accepted; a call refused here costs this
+  // canister no cycles. It is only an early "no": it runs on one node and
+  // canister callers skip it, so every method still does all of its own
+  // checks. Public methods are listed explicitly; anything else (admin
+  // methods, queries sent as paid update calls, timer-only maintenance) is
+  // left to controllers. Timers call their methods as self-calls, which never
+  // come through here.
+  transient var lastManualDistributeAt : Int = 0;
+  transient let MANUAL_DISTRIBUTE_MIN_INTERVAL_NANOS : Int = 600_000_000_000; // 10 min
+
+  system func inspect({
+    caller : Principal;
+    arg : Blob;
+    msg : {
+      #getConfig : Any;
+      #getPublicKey : Any;
+      #fetchPublicKey : Any;
+      #myVaults : Any;
+      #createVault : Any;
+      #checkIn : Any;
+      #setInterval : () -> (Nat, Nat);
+      #deleteVault : () -> Nat;
+      #heirLookup : Any;
+      #heirOpen : () -> (Nat, Blob, Blob);
+      #distributeFees : Any;
+      #setFeeShareTargets : Any;
+      #setFee : Any;
+      #setFeeRecipient : Any;
+      #setPikoLedgerId : Any;
+      #setKeyName : Any;
+      #setDerivationCycles : Any;
+      #setMinIntervalSec : Any;
+      #withdrawFees : Any;
+    };
+  }) : Bool {
+    if (arg.size() > (switch msg { case (#createVault _) { 49_152 }; case _ { 1024 } })) { return false };
+    let now = Time.now();
+    switch msg {
+      case (#createVault _) { admitPaid(caller, now, Map.get(lastAction, Principal.compare, caller), MIN_ACTION_INTERVAL) };
+      case (#checkIn _) {
+        for (v in Map.values(vaults)) {
+          if (v.owner == caller and not released(v, now)) { return true };
+        };
+        false;
+      };
+      case (#setInterval f) {
+        let (id, _) = f();
+        switch (ownedVault(caller, id)) { case (#ok v) { not released(v, now) }; case (#err _) { false } };
+      };
+      case (#deleteVault id) {
+        switch (ownedVault(caller, id())) { case (#ok _) { true }; case (#err _) { false } };
+      };
+      case (#heirOpen f) {
+        let (id, proof, _) = f();
+        switch (Map.get(vaults, Nat.compare, id)) {
+          case (?v) { released(v, now) and heirIndex(v, proof) != null };
+          case null { false };
+        };
+      };
+      case (#fetchPublicKey _) { cachedPublicKey == null };
+      case (#distributeFees _) { not distributing and now - lastManualDistributeAt >= MANUAL_DISTRIBUTE_MIN_INTERVAL_NANOS };
+      case _ { Principal.isController(caller) };
+    };
+  };
 };
