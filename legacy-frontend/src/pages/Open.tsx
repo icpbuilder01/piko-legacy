@@ -3,6 +3,7 @@ import { useLoad, useSession, date, timeLeft } from "../lib/session";
 import { fromB64Url, heirProof, newTransportKey, openVault } from "../lib/vault-crypto";
 import { vaultPublicKey } from "../lib/vault-key";
 import { ErrorLine, Pill } from "../components/ui";
+import { refusalText } from "../lib/format";
 
 /** The heir's page. No login: the link itself is the credential. */
 export function Open({ id, secret }: { id: string; secret: string }) {
@@ -31,7 +32,7 @@ export function Open({ id, secret }: { id: string; secret: string }) {
       setText(await openVault(publicKey, tsk, r.ok, fromB64Url(secret)));
       lookup.reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(refusalText(e) ?? (e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
     }

@@ -172,6 +172,7 @@ actor self {
   transient let MAX_VAULTS : Nat = 5_000;
   transient let MAX_OPENS_PER_HEIR : Nat = 3;
   transient let MAX_OPENS_PER_VAULT : Nat = 10; // bounds the cycles one fee has to pay for
+  transient let CHECK_IN_MIN_INTERVAL_NANOS : Int = 60_000_000_000; // ingress check-ins: one a minute is plenty
   transient let CYCLES_RESERVE : Nat = 300_000_000_000; // never let a derivation eat the freezing margin
   transient let MIN_ACTION_INTERVAL : Int = 3 * SEC;
   transient let CONTEXT : Blob = "piko-legacy-v1";
@@ -739,10 +740,40 @@ actor self {
   func paidRefusal(caller : Principal, now : Int) : ?Nat {
     if (isKnownPlayer(caller)) {
       let until = blockedUntil(caller);
-      if (until > now) { ?Int.abs(until - now) } else { null };
+      if (until > now) { return ?Int.abs(until - now) };
     } else if (newcomerCreditNow(now) < NEWCOMER_REFILL_NANOS) {
-      ?Int.abs(NEWCOMER_REFILL_NANOS - newcomerCreditNow(now));
-    } else { null };
+      return ?Int.abs(NEWCOMER_REFILL_NANOS - newcomerCreditNow(now));
+    };
+    spendWait(now);
+  };
+
+  // Spend budget (2026-11-14): every accepted vault creation draws SPEND_COST from a
+  // credit that refills at about 1% of this canister's balance per day (one
+  // hour's worth at most at once). Real but tiny bets still pass the checks
+  // above; this bounds what they, or anything else that slips through, can
+  // cost: about 1% of the balance a day, shrinking with the balance.
+  transient let SPEND_BPS_PER_DAY : Nat = 100;
+  transient let SPEND_COST : Int = 50_000_000;
+  transient let SPEND_BURST_SECONDS : Int = 3_600;
+  transient var spendCredit : Int = 0;
+  transient var spendCreditAt : Int = 0;
+  transient var spendStarted : Bool = false;
+  func spendRatePerSecond() : Int { Cycles.balance() * SPEND_BPS_PER_DAY / 10_000 / 86_400 };
+  func spendCreditNow(now : Int) : Int {
+    let rate = spendRatePerSecond();
+    let cap = rate * SPEND_BURST_SECONDS;
+    if (not spendStarted) { return cap };
+    Int.min(cap, spendCredit + (now - spendCreditAt) * rate / 1_000_000_000);
+  };
+  func spendWait(now : Int) : ?Nat {
+    let credit = spendCreditNow(now);
+    if (credit >= SPEND_COST) { return null };
+    ?Int.abs((SPEND_COST - credit) * 1_000_000_000 / Int.max(1, spendRatePerSecond()));
+  };
+  func takeSpend(now : Int) {
+    spendCredit := spendCreditNow(now) - SPEND_COST;
+    spendCreditAt := now;
+    spendStarted := true;
   };
 
   func admitPaid(caller : Principal, now : Int, lastAttempt : ?Int, interval : Int) : Bool {
@@ -760,6 +791,7 @@ actor self {
       case (?wait) { ?wait };
       case null {
         if (not isKnownPlayer(caller)) { ignore takeNewcomerSlot(now) };
+        takeSpend(now);
         null;
       };
     };
@@ -806,9 +838,10 @@ actor self {
     let now = Time.now();
     switch msg {
       case (#createVault _) { admitPaid(caller, now, Map.get(lastAction, Principal.compare, caller), MIN_ACTION_INTERVAL) };
+      // At most once a minute: one check-in already resets every vault.
       case (#checkIn _) {
         for (v in Map.values(vaults)) {
-          if (v.owner == caller and not released(v, now)) { return true };
+          if (v.owner == caller and not released(v, now) and now - v.lastCheckIn >= CHECK_IN_MIN_INTERVAL_NANOS) { return true };
         };
         false;
       };
@@ -822,7 +855,17 @@ actor self {
       case (#heirOpen f) {
         let (id, proof, _) = f();
         switch (Map.get(vaults, Nat.compare, id)) {
-          case (?v) { released(v, now) and heirIndex(v, proof) != null };
+          case (?v) {
+            if (not released(v, now)) { return false };
+            switch (heirIndex(v, proof)) {
+              case (?i) {
+                var vaultOpens = 0;
+                for (h in v.heirs.vals()) { vaultOpens += h.opens };
+                v.heirs[i].opens < MAX_OPENS_PER_HEIR and vaultOpens < MAX_OPENS_PER_VAULT;
+              };
+              case null { false };
+            };
+          };
           case null { false };
         };
       };

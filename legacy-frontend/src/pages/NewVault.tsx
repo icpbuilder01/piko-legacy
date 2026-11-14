@@ -6,6 +6,7 @@ import { legacyCanisterId } from "../lib/canister-env";
 import { sealVault, toB64Url } from "../lib/vault-crypto";
 import { vaultPublicKey } from "../lib/vault-key";
 import { Amount, ErrorLine } from "../components/ui";
+import { refusalText } from "../lib/format";
 
 interface Made {
   id: bigint;
@@ -85,7 +86,7 @@ export function NewVault() {
       setText("");
       toast("Vault created.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(refusalText(e) ?? (e instanceof Error ? e.message : String(e)));
     } finally {
       setStep(null);
     }

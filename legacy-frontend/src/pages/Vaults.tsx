@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ok, useLoad, useSession, date, duration, timeLeft, intervalChoices } from "../lib/session";
 import type { OwnerView } from "../bindings/legacy/legacy";
 import { ErrorLine, Pill } from "../components/ui";
+import { refusalText } from "../lib/format";
 
 export function Vaults() {
   const { actor, toast } = useSession();
@@ -21,7 +22,7 @@ export function Vaults() {
       toast(n === 1n ? "Checked in. Countdown restarted." : `Checked in. ${n} countdowns restarted.`);
       reload();
     } catch (e) {
-      toast(e instanceof Error ? e.message : String(e), "err");
+      toast(refusalText(e) ?? (e instanceof Error ? e.message : String(e)), "err");
     } finally {
       setBusy(false);
     }
@@ -78,7 +79,7 @@ function VaultCard({ v, minIntervalSec, onChange }: { v: OwnerView; minIntervalS
       toast(done);
       onChange();
     } catch (e) {
-      toast(e instanceof Error ? e.message : String(e), "err");
+      toast(refusalText(e) ?? (e instanceof Error ? e.message : String(e)), "err");
     } finally {
       setBusy(false);
     }
